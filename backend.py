@@ -17,6 +17,7 @@ from lib.alfred import Alfred
 from lib.batman import Batman
 from lib.rrddb import RRD
 from lib.nodelist import export_nodelist
+from lib.validate import validate_nodeinfos
 
 NODES_VERSION = 1
 GRAPH_VERSION = 1
@@ -76,6 +77,7 @@ def main(params):
 
     # integrate alfred nodeinfo
     for alfred in alfred_instances:
+		nodeinfo = validate_nodeinfos(alfred.nodeinfo())
         nodes.import_nodeinfo(nodedb['nodes'], alfred.nodeinfo(),
                               now, assume_online=True,
                               hide_ownership=params['hide_ownership'])
@@ -83,7 +85,8 @@ def main(params):
     # integrate static aliases data
     for aliases in params['aliases']:
         with open(aliases, 'r') as f:
-            nodes.import_nodeinfo(nodedb['nodes'], json.load(f),
+            nodeinfo = validate_nodeinfos(json.load(f))
+            nodes.import_nodeinfo(nodedb['nodes'], nodeinfo,
                                   now, assume_online=False)
 
     nodes.reset_statistics(nodedb['nodes'])
@@ -117,6 +120,19 @@ def main(params):
     # force mac addresses to be vpn-link only (like gateways for example)
     if params['vpn']:
         graph.mark_vpn(batadv_graph, frozenset(params['vpn']))
+
+    def extract_tunnel(nodes):
+        macs = set()
+        for id, node in nodes.items():
+            try:
+                for mac in node["nodeinfo"]["network"]["mesh"]["bat0"]["interfaces"]["tunnel"]:
+                    macs.add(mac)
+            except KeyError:
+                pass
+
+        return macs
+
+    graph.mark_vpn(batadv_graph, extract_tunnel(nodedb['nodes']))
 
     batadv_graph = graph.merge_nodes(batadv_graph)
     batadv_graph = graph.to_undirected(batadv_graph)

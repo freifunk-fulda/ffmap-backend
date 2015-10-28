@@ -18,6 +18,13 @@ For the script's regular execution add the following to the crontab:
 * * * * * backend.py -d /path/to/output -a /path/to/aliases.json --vpn ae:7f:58:7d:6c:2a d2:d0:93:63:f7:da
 </pre>
 
+# Dependencies
+
+- Python 3
+- Python 3 Package [Networkx](https://networkx.github.io/)
+- [alfred-json](https://github.com/tcatm/alfred-json)
+- rrdtool (if run with `--with-rrd`)
+
 # Running as unprivileged user
 
 Some information collected by ffmap-backend requires access to specific system resources.
@@ -71,6 +78,21 @@ will prefix `sudo` where necessary.
 
 - online
 - gateway
+
+## Old data format
+
+If you want to still use the old [ffmap-d3](https://github.com/ffnord/ffmap-d3)
+front end, you can use the file `ffmap-d3.jq` to convert the new output to the
+old one:
+
+```
+jq -n -f ffmap-d3.jq \
+    --argfile nodes nodedb/nodes.json \
+    --argfile graph nodedb/graph.json \
+    > nodedb/ffmap-d3.json
+```
+
+Then point your ffmap-d3 instance to the `ffmap-d3.json` file.
 
 # Removing owner information
 
