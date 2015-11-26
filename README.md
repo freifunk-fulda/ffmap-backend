@@ -55,23 +55,24 @@ will prefix `sudo` where necessary.
 
 ## nodes.json
 
-    { 'nodes': {
-        node_id: { 'flags': { flags },
-                   'firstseen': isoformat,
-                   'lastseen': isoformat,
-                   'nodeinfo': {...},         # copied from alfred type 158
-                   'statistics': {
-                      'uptime': double,       # seconds
-                      'memory_usage': double, # 0..1
-                      'clients': double,
-                      'rootfs_usage': double, # 0..1
-                      'loadavg': double,
-                      'gateway': mac
-                    }
-                 },
+    { "nodes": [
+        { "flags": { flags },
+          "firstseen": isoformat,
+          "lastseen": isoformat,
+          "nodeinfo": {...},         # copied from node's nodeinfo announcement
+          "statistics": {
+             "uptime": double,       # seconds
+             "memory_usage": double, # 0..1
+             "clients": double,
+             "rootfs_usage": double, # 0..1
+             "loadavg": double,
+             "gateway": mac
+           }
+        },
         ...
-      }
-      'timestamp': isoformat
+      ]
+      "timestamp": isoformat,
+      "version": 2
     }
 
 ### flags (bool)
@@ -108,10 +109,57 @@ database.
 After running ffmap-backend, copy `graph.json` to your webserver. Then,
 filter `nodes.json` using `jq` like this:
 
-     jq '.nodes = (.nodes | with_entries(del(.value.nodeinfo.owner)))' \
+     jq '.nodes = (.nodes | map(del(.nodeinfo.owner)))' \
        < /ffmap-data/nodes.json > /var/www/data/nodes.json
 
 This will remove owner information from nodes.json before copying the data
 to your webserver.
 
 [jq]: https://stedolan.github.io/jq/
+
+
+# Convert from nodes.json version 1 to version 2
+
+    jq '.nodes = (.nodes | to_entries | map(.value)) | .version = 2' \
+    < nodes.json > nodes.json.new
+    mv nodes.json.new nodes.json
+
+
+# Graphite support
+
+## Comand line arguments
+Running `backend.py` with `--with-graphite` will enable graphite support for storing statistical data.
+
+	graphite integration:
+	  --with-graphite       Send statistical data to graphite backend
+	  --graphite-host GRAPHITE_HOST
+	                        Hostname of the machine running graphite
+	  --graphite-port GRAPHITE_PORT
+	                        Port of the carbon daemon
+	  --graphite-prefix GRAPHITE_PREFIX
+	                        Storage prefix (default value: 'freifunk.nodes.')
+	  --graphite-metrics GRAPHITE_METRICS
+	                        Comma separated list of metrics to store (default
+	                        value: 'clients,loadavg,uptime')
+
+## Graphite configuration
+
+### storage-schemas.conf
+
+	[freifunk_node_stats]
+	pattern = ^freifunk\.nodes\.
+	retentions = 60s:1d,5min:7d,1h:30d,1d:4y
+	
+### storage-aggregation.conf
+
+	[freifunk_node_stats_loadavg]
+	pattern = ^freifunk\.nodes\..*\.loadavg$
+	aggregationMethod = avg
+
+	[freifunk_node_stats_clients]
+	pattern = ^freifunk\.nodes\..*\.clients$
+	aggregationMethod = max
+
+	[freifunk_node_stats_uptime]
+	pattern = ^freifunk\.nodes\..*\.uptime$
+	aggregationMethod = last

@@ -18,8 +18,9 @@ from lib.batman import Batman
 from lib.rrddb import RRD
 from lib.nodelist import export_nodelist
 from lib.validate import validate_nodeinfos
+from lib.graphite import Graphite
 
-NODES_VERSION = 1
+NODES_VERSION = 2
 GRAPH_VERSION = 1
 
 
@@ -58,22 +59,23 @@ def main(params):
 
     # read nodedb state from node.json
     try:
-        with open(nodes_fn, 'r') as nodedb_handle:
+        with open(nodes_fn, 'r', encoding=('UTF-8')) as nodedb_handle:
             nodedb = json.load(nodedb_handle)
     except IOError:
-        nodedb = {'nodes': dict()}
-
-    # flush nodedb if it uses the old format
-    if 'links' in nodedb:
-        nodedb = {'nodes': dict()}
+        nodedb = {'nodes': []}
 
     # set version we're going to output
     nodedb['version'] = NODES_VERSION
 
     # update timestamp and assume all nodes are offline
     nodedb['timestamp'] = now.isoformat()
-    for node_id, node in nodedb['nodes'].items():
+    for node in nodedb['nodes']:
         node['flags']['online'] = False
+
+    nodesdict = {}
+
+    for node in nodedb['nodes']:
+        nodesdict[node['nodeinfo']['node_id']] = node
 
     # integrate alfred nodeinfo
     for alfred in alfred_instances:
@@ -86,44 +88,44 @@ def main(params):
     for aliases in params['aliases']:
         with open(aliases, 'r') as f:
             nodeinfo = validate_nodeinfos(json.load(f))
-            nodes.import_nodeinfo(nodedb['nodes'], nodeinfo,
+            nodes.import_nodeinfo(nodesdict, nodeinfo,
                                   now, assume_online=False)
 
-    nodes.reset_statistics(nodedb['nodes'])
+    nodes.reset_statistics(nodesdict)
     for alfred in alfred_instances:
-        nodes.import_statistics(nodedb['nodes'], alfred.statistics())
+        nodes.import_statistics(nodesdict, alfred.statistics())
 
-    # acquire gwl and visdata for each batman instance
+    # acquire visdata for each batman instance
     mesh_info = []
     for batman in batman_instances:
         vd = batman.vis_data()
-        gwl = batman.gateway_list()
 
-        mesh_info.append((vd, gwl))
+        mesh_info.append(vd)
 
     # update nodedb from batman-adv data
-    for vd, gwl in mesh_info:
-        nodes.import_mesh_ifs_vis_data(nodedb['nodes'], vd)
-        nodes.import_vis_clientcount(nodedb['nodes'], vd)
-        nodes.mark_vis_data_online(nodedb['nodes'], vd, now)
-        nodes.mark_gateways(nodedb['nodes'], gwl)
+    for vd in mesh_info:
+        nodes.import_mesh_ifs_vis_data(nodesdict, vd)
+        nodes.import_vis_clientcount(nodesdict, vd)
+        nodes.mark_vis_data_online(nodesdict, vd, now)
 
     # clear the nodedb from nodes that have not been online in $prune days
     if params['prune']:
-        nodes.prune_nodes(nodedb['nodes'], now, params['prune'])
+        nodes.prune_nodes(nodesdict, now, params['prune'])
 
     # build nxnetworks graph from nodedb and visdata
     batadv_graph = nx.DiGraph()
-    for vd, gwl in mesh_info:
-        graph.import_vis_data(batadv_graph, nodedb['nodes'], vd)
+    for vd in mesh_info:
+        graph.import_vis_data(batadv_graph, nodesdict, vd)
 
     # force mac addresses to be vpn-link only (like gateways for example)
     if params['vpn']:
         graph.mark_vpn(batadv_graph, frozenset(params['vpn']))
 
+    nodedb['nodes'] = list(nodesdict.values())
+
     def extract_tunnel(nodes):
         macs = set()
-        for id, node in nodes.items():
+        for node in nodes:
             try:
                 for mac in node["nodeinfo"]["network"]["mesh"]["bat0"]["interfaces"]["tunnel"]:
                     macs.add(mac)
@@ -150,14 +152,17 @@ def main(params):
     with open(nodelist_fn, 'w') as f:
         json.dump(export_nodelist(now, nodedb), f)
 
+    # optional Graphite integration
+    if params['graphite']:
+        graphite = Graphite(params['graphite_host'], params['graphite_port'])
+        graphite.update(params['graphite_prefix'], params['graphite_metrics'], nodedb['nodes'])
+
     # optional rrd graphs (trigger with --rrd)
     if params['rrd']:
-        script_directory = os.path.dirname(os.path.realpath(__file__))
-        rrd = RRD(os.path.join(script_directory, 'nodedb'),
-                  os.path.join(params['dest_dir'], 'nodes'))
+        rrd = RRD(params['rrd_path'], os.path.join(params['dest_dir'], 'nodes'))
         rrd.update_database(nodedb['nodes'])
-        rrd.update_images()
-
+        if params['img']:
+            rrd.update_images()
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -167,7 +172,7 @@ if __name__ == '__main__':
                         nargs='+', default=[], metavar='FILE')
     parser.add_argument('-m', '--mesh',
                         default=['bat0'], nargs='+',
-                        help='Use given batman-adv mesh interface(s) (defaults'
+                        help='Use given batman-adv mesh interface(s) (defaults '
                              'to bat0); specify alfred unix socket like '
                              'bat0:/run/alfred0.sock.')
     parser.add_argument('-d', '--dest-dir', action='store',
@@ -177,14 +182,32 @@ if __name__ == '__main__':
                         help='Assume MAC addresses are part of vpn')
     parser.add_argument('-p', '--prune', metavar='DAYS', type=int,
                         help='forget nodes offline for at least DAYS')
+    parser.add_argument('--rrd-path', default=os.path.join(os.path.dirname(os.path.realpath(__file__)), 'nodedb'),
+                        help='path to RRD files')
     parser.add_argument('--with-rrd', dest='rrd', action='store_true',
                         default=False,
-                        help='Enable the rendering of RRD graphs '
-                             '(cpu intensive)')
-    parser.add_argument('--with-hidden-ownership', dest='hide_ownership',
+                        help='enable the collection of RRD data')
+    parser.add_argument('--with-img', dest='img', action='store_true',
+                        default=False,
+                        help='enable the rendering of RRD graphs (cpu '
+                             'intensive)')
+	parser.add_argument('--with-hidden-ownership', dest='hide_ownership',
                         action='store_true', default=False,
                         help='Remove owner/contact information from'
                              'alfred nodeinfo')
+
+    # Graphite integration
+    graphite = parser.add_argument_group('graphite integration')
+    graphite.add_argument('--with-graphite', dest='graphite', action='store_true', default=False,
+                          help='Send statistical data to graphite backend')
+    graphite.add_argument('--graphite-host', dest='graphite_host', default="localhost",
+                          help='Hostname of the machine running graphite')
+    graphite.add_argument('--graphite-port', dest='graphite_port', default="2003", type=int,
+                          help='Port of the carbon daemon')
+    graphite.add_argument('--graphite-prefix', dest='graphite_prefix', default="freifunk.nodes.",
+                          help='Storage prefix (default value: \'freifunk.nodes.\')')
+    graphite.add_argument('--graphite-metrics', dest='graphite_metrics', default="clients,loadavg,uptime",
+                          help='Comma separated list of metrics to store (default value: \'clients,loadavg,uptime\')')
 
     options = vars(parser.parse_args())
     main(options)

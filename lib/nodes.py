@@ -68,7 +68,6 @@ def import_nodeinfo(nodes, nodeinfos, now, assume_online=False,
                 pass
         node['nodeinfo'] = nodeinfo
         node['flags']['online'] = False
-        node['flags']['gateway'] = False
 
         if assume_online:
             mark_online(node, now)
@@ -93,11 +92,10 @@ def import_statistics(nodes, stats):
     stats = filter(lambda d: d['node_id'] in nodes, stats)
     for node, stats in map(lambda d: (nodes[d['node_id']], d), stats):
         add(node, stats, 'clients', ['clients', 'total'])
-        add(node, stats, 'gateway', ['gateway'], lambda d: macs.get(d, d))
         add(node, stats, 'uptime', ['uptime'])
         add(node, stats, 'loadavg', ['loadavg'])
         add(node, stats, 'memory_usage', ['memory'],
-            lambda d: 1 - d['free'] / d['total'])
+            lambda d: 1 - (d['free'] + d['buffers'] + d['cached']) / d['total'])
         add(node, stats, 'rootfs_usage', ['rootfs_usage'])
         add(node, stats, 'traffic', ['traffic'])
 
@@ -157,14 +155,6 @@ def import_vis_clientcount(nodes, vis_data):
 
     for node_id, clientcount in Counter(data).items():
         nodes[node_id]['statistics'].setdefault('clients', clientcount)
-
-
-def mark_gateways(nodes, gateways):
-    macs = build_mac_table(nodes)
-    gateways = filter(lambda d: d in macs, gateways)
-
-    for node in map(lambda d: nodes[macs[d]], gateways):
-        node['flags']['gateway'] = True
 
 
 def mark_vis_data_online(nodes, vis_data, now):

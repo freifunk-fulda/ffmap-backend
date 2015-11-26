@@ -1,9 +1,9 @@
 def export_nodelist(now, nodedb):
     nodelist = list()
 
-    for node_id, node in nodedb["nodes"].items():
+    for node in nodedb["nodes"]:
         node_out = dict()
-        node_out["id"] = node_id
+        node_out["id"] = node["nodeinfo"]["node_id"]
         node_out["name"] = node["nodeinfo"]["hostname"]
 
         if "location" in node["nodeinfo"]:
@@ -12,6 +12,9 @@ def export_nodelist(now, nodedb):
 
         node_out["status"] = dict()
         node_out["status"]["online"] = node["flags"]["online"]
+
+        if "firstseen" in node:
+            node_out["status"]["firstcontact"] = node["firstseen"]
 
         if "lastseen" in node:
             node_out["status"]["lastcontact"] = node["lastseen"]
