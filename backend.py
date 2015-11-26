@@ -80,7 +80,7 @@ def main(params):
     # integrate alfred nodeinfo
     for alfred in alfred_instances:
         nodeinfo = validate_nodeinfos(alfred.nodeinfo())
-        nodes.import_nodeinfo(nodedb['nodes'], alfred.nodeinfo(),
+        nodes.import_nodeinfo(nodesdict, alfred.nodeinfo(),
                               now, assume_online=True,
                               hide_ownership=params['hide_ownership'])
 
