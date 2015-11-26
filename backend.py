@@ -191,7 +191,7 @@ if __name__ == '__main__':
                         default=False,
                         help='enable the rendering of RRD graphs (cpu '
                              'intensive)')
-	parser.add_argument('--with-hidden-ownership', dest='hide_ownership',
+    parser.add_argument('--with-hidden-ownership', dest='hide_ownership',
                         action='store_true', default=False,
                         help='Remove owner/contact information from'
                              'alfred nodeinfo')
